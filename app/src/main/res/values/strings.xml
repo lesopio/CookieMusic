@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">饼干音乐</string>
+    <string name="channel_name">音乐播放</string>
+    <string name="channel_description">音乐播放控制</string>
+</resources>
