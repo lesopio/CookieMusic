@@ -187,7 +187,7 @@ Equalizer → BassBoost → Virtualizer → LoudnessEnhancer
 
 ### Q: 为什么高刷新率没有生效？
 
-有bug，还在找（笑
+因为我是笨蛋，忘记打包release版本了（）
 
 ---
 ## 接下来要做的事情
