@@ -4,6 +4,7 @@ import android.net.Uri
 
 data class Song(
     val id: Long,
+    val canonicalId: String = "legacy:$id",
     val title: String,
     val artist: String,
     val album: String,

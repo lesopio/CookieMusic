@@ -109,15 +109,21 @@ private fun ColorScheme.withSeedAccent(argb: Long, darkTheme: Boolean): ColorSch
     val secondaryContainer = secondary.blend(if (darkTheme) Color.Black else Color.White, if (darkTheme) 0.42f else 0.78f)
     return copy(
         primary = primary,
-        onPrimary = if (primary.luminance() > 0.5f) Color.Black else Color.White,
+        onPrimary = primary.bestOnColor(),
         primaryContainer = primaryContainer,
-        onPrimaryContainer = if (primaryContainer.luminance() > 0.5f) Color.Black else Color.White,
+        onPrimaryContainer = primaryContainer.bestOnColor(),
         secondary = secondary,
-        onSecondary = if (secondary.luminance() > 0.5f) Color.Black else Color.White,
+        onSecondary = secondary.bestOnColor(),
         secondaryContainer = secondaryContainer,
-        onSecondaryContainer = if (secondaryContainer.luminance() > 0.5f) Color.Black else Color.White,
+        onSecondaryContainer = secondaryContainer.bestOnColor(),
         surfaceTint = primary
     )
+}
+
+private fun Color.bestOnColor(): Color {
+    val blackContrast = (luminance() + 0.05f) / 0.05f
+    val whiteContrast = 1.05f / (luminance() + 0.05f)
+    return if (blackContrast >= whiteContrast) Color.Black else Color.White
 }
 
 private fun Color.blend(other: Color, amount: Float): Color {

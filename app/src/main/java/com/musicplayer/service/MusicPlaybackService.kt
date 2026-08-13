@@ -95,6 +95,7 @@ class MusicPlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
+    @OptIn(UnstableApi::class)
     private fun applyAudioEffects(audioSessionId: Int = exoPlayer?.audioSessionId ?: 0) {
         if (audioSessionId == 0) return
         if (audioEffectsSessionId != 0 && audioEffectsSessionId != audioSessionId) {

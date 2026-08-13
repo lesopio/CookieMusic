@@ -1,7 +1,6 @@
 package com.musicplayer.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -16,13 +15,13 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.musicplayer.data.AudioVisualizationState
 import com.musicplayer.data.Song
 
 @Composable
@@ -32,10 +31,15 @@ fun FlowingBlurBackground(
     isPlaying: Boolean,
     enabled: Boolean,
     intensity: Float,
-    subduedArtwork: Boolean = false
+    stageParticlesEnabled: Boolean = true,
+    beatReactiveEnabled: Boolean = true,
+    visualizerState: AudioVisualizationState = AudioVisualizationState(),
+    subduedArtwork: Boolean = false,
+    darkTheme: Boolean = false
 ) {
     val clampedIntensity = intensity.coerceIn(0.2f, 1f)
     val active = enabled && isPlaying
+    val audioPulse = if (active && beatReactiveEnabled) visualizerState.beatPulse.coerceIn(0f, 1f) else 0f
     val transition = rememberInfiniteTransition(label = "flowing_blur_background")
     val driftX by transition.animateFloat(
         initialValue = -22f * clampedIntensity,
@@ -115,15 +119,9 @@ fun FlowingBlurBackground(
         animationSpec = infiniteRepeatable(tween(14_500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "flow_blob_scale_b"
     )
-    val blobAlpha by transition.animateFloat(
-        initialValue = 0.72f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(11_000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "flow_blob_alpha"
-    )
     val x = if (active) driftX else 0f
     val y = if (active) driftY else 0f
-    val scale = if (active) scalePulse else 0f
+    val scale = if (active) scalePulse + audioPulse * 0.035f else 0f
     val ax = if (active) blobAX else -18f
     val ay = if (active) blobAY else 10f
     val bx = if (active) blobBX else 16f
@@ -134,9 +132,13 @@ fun FlowingBlurBackground(
     val dy = if (active) blobDY else -8f
     val blobPrimaryScale = if (active) blobScaleA else 1f
     val blobSecondaryScale = if (active) blobScaleB else 1f
-    val blobPulse = if (active) blobAlpha else 0.86f
-    val baseAlpha = if (subduedArtwork) 0.20f else 0.94f
-    val blobAlphaBase = if (subduedArtwork) 0.13f else 0.24f
+    val blobPulse = if (active) 0.92f + audioPulse * 0.18f else 0.86f
+    val baseAlpha = when {
+        subduedArtwork -> 0.20f
+        darkTheme -> 0.58f
+        else -> 0.40f
+    }
+    val blobAlphaBase = if (subduedArtwork) 0.13f else if (darkTheme) 0.22f else 0.18f
 
     Box(Modifier.fillMaxSize()) {
         if (song != null) {
@@ -163,68 +165,64 @@ fun FlowingBlurBackground(
         }
         val primary = MaterialTheme.colorScheme.primary
         val tertiary = MaterialTheme.colorScheme.tertiary
+        val complement = Color(1f - accent.red, 1f - accent.green, 1f - accent.blue, accent.alpha)
+        val neighbor = Color(accent.green, accent.blue, accent.red, accent.alpha)
         Canvas(Modifier.fillMaxSize()) {
-            fun drawSoftBlob(
+            drawRect(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        accent.copy(alpha = (0.06f + clampedIntensity * 0.05f).coerceIn(0f, 0.14f)),
+                        complement.copy(alpha = (0.04f + clampedIntensity * 0.04f).coerceIn(0f, 0.11f)),
+                        primary.copy(alpha = (0.05f + clampedIntensity * 0.04f).coerceIn(0f, 0.12f)),
+                        neighbor.copy(alpha = (0.04f + clampedIntensity * 0.04f).coerceIn(0f, 0.10f))
+                    ),
+                    start = Offset(size.width * 0.08f + ax.dp.toPx() * 0.12f, 0f),
+                    end = Offset(size.width * 0.92f + bx.dp.toPx() * 0.10f, size.height)
+                )
+            )
+
+            fun drawSoftWash(
                 color: Color,
-                baseSizeDp: Float,
-                offsetXDp: Float,
-                offsetYDp: Float,
-                scaleX: Float,
-                scaleY: Float,
+                center: Offset,
+                radius: Float,
                 alpha: Float
             ) {
-                val width = baseSizeDp.dp.toPx() * scaleX
-                val height = baseSizeDp.dp.toPx() * scaleY
-                val topLeft = Offset(offsetXDp.dp.toPx(), offsetYDp.dp.toPx())
-                val center = Offset(topLeft.x + width / 2f, topLeft.y + height / 2f)
-                drawOval(
+                drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            color.copy(alpha = (0.78f * alpha).coerceIn(0f, 1f)),
-                            color.copy(alpha = (0.28f * alpha).coerceIn(0f, 1f)),
+                            color.copy(alpha = (0.34f * alpha).coerceIn(0f, 1f)),
+                            color.copy(alpha = (0.14f * alpha).coerceIn(0f, 1f)),
                             Color.Transparent
                         ),
                         center = center,
-                        radius = maxOf(width, height) * 0.58f
+                        radius = radius
                     ),
-                    topLeft = topLeft,
-                    size = Size(width, height)
+                    radius = radius,
+                    center = center
                 )
             }
-            drawSoftBlob(
+            drawSoftWash(
                 color = accent,
-                baseSizeDp = 430f,
-                offsetXDp = -118f + ax,
-                offsetYDp = 48f + ay,
-                scaleX = 1.28f * blobPrimaryScale,
-                scaleY = 0.78f * blobSecondaryScale,
+                center = Offset(size.width * 0.18f + ax.dp.toPx(), size.height * 0.23f + ay.dp.toPx()),
+                radius = size.maxDimension * 0.46f * blobPrimaryScale,
                 alpha = (blobAlphaBase + clampedIntensity * 0.12f) * blobPulse
             )
-            drawSoftBlob(
-                color = primary,
-                baseSizeDp = 390f,
-                offsetXDp = 250f + bx,
-                offsetYDp = 132f + by,
-                scaleX = 0.86f * blobSecondaryScale,
-                scaleY = 1.34f * blobPrimaryScale,
+            drawSoftWash(
+                color = complement,
+                center = Offset(size.width * 0.84f + bx.dp.toPx(), size.height * 0.32f + by.dp.toPx()),
+                radius = size.maxDimension * 0.40f * blobSecondaryScale,
                 alpha = (blobAlphaBase + clampedIntensity * 0.08f) * (1.12f - (blobPulse - 0.72f) * 0.42f)
             )
-            drawSoftBlob(
+            drawSoftWash(
                 color = tertiary,
-                baseSizeDp = 460f,
-                offsetXDp = -86f + cx,
-                offsetYDp = 430f + cy,
-                scaleX = 1.18f * blobSecondaryScale,
-                scaleY = 0.92f * blobPrimaryScale,
+                center = Offset(size.width * 0.22f + cx.dp.toPx(), size.height * 0.76f + cy.dp.toPx()),
+                radius = size.maxDimension * 0.48f * blobSecondaryScale,
                 alpha = (blobAlphaBase + clampedIntensity * 0.10f) * (0.92f + (blobPulse - 0.72f) * 0.28f)
             )
-            drawSoftBlob(
-                color = accent,
-                baseSizeDp = 360f,
-                offsetXDp = 218f + dx,
-                offsetYDp = 596f + dy,
-                scaleX = 1.04f * blobPrimaryScale,
-                scaleY = 1.18f * blobSecondaryScale,
+            drawSoftWash(
+                color = neighbor,
+                center = Offset(size.width * 0.78f + dx.dp.toPx(), size.height * 0.84f + dy.dp.toPx()),
+                radius = size.maxDimension * 0.36f * blobPrimaryScale,
                 alpha = (blobAlphaBase * 0.82f + clampedIntensity * 0.08f) * (1.02f - (blobPulse - 0.72f) * 0.25f)
             )
         }
@@ -233,11 +231,19 @@ fun FlowingBlurBackground(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(
-                            accent.copy(alpha = if (subduedArtwork) 0.06f else 0.10f),
-                            MaterialTheme.colorScheme.background.copy(alpha = if (subduedArtwork) 0.90f else 0.72f),
-                            MaterialTheme.colorScheme.background
-                        )
+                        if (darkTheme) {
+                            listOf(
+                                Color.Black.copy(alpha = if (subduedArtwork) 0.72f else 0.38f),
+                                accent.copy(alpha = if (subduedArtwork) 0.08f else 0.10f),
+                                Color.Black.copy(alpha = if (subduedArtwork) 0.82f else 0.54f)
+                            )
+                        } else {
+                            listOf(
+                                Color.White.copy(alpha = if (subduedArtwork) 0.88f else 0.44f),
+                                accent.copy(alpha = if (subduedArtwork) 0.05f else 0.08f),
+                                Color.White.copy(alpha = if (subduedArtwork) 0.92f else 0.58f)
+                            )
+                        }
                     )
                 )
         )

@@ -65,6 +65,7 @@ fun ImportManagerScreen(
     val importedSongs by viewModel.importedSongs.collectAsState()
     val importedFolders by viewModel.importedFolders.collectAsState()
     val isImportingFolder by viewModel.isImportingFolder.collectAsState()
+    val isImportingSongs by viewModel.isImportingSongs.collectAsState()
     val snackbarEvent by viewModel.snackbarEvent.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val directSongs = importedSongs.filter { it.folderName == "导入歌曲" }
@@ -113,10 +114,14 @@ fun ImportManagerScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(onClick = { importSongsLauncher.launch(arrayOf("audio/*")) }, modifier = Modifier.weight(1f)) {
+                        Button(
+                            onClick = { importSongsLauncher.launch(arrayOf("audio/*")) },
+                            enabled = !isImportingSongs && !isImportingFolder,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Icon(Icons.Default.AudioFile, contentDescription = null)
                             Spacer(Modifier.size(8.dp))
-                            Text("导入歌曲")
+                            Text(if (isImportingSongs) "导入中…" else "导入歌曲")
                         }
                         FilledTonalButton(
                             onClick = { importFolderLauncher.launch(null) },
@@ -129,7 +134,7 @@ fun ImportManagerScreen(
                         }
                     }
                     OutlinedButton(
-                        onClick = { importLyricsLauncher.launch(arrayOf("application/octet-stream", "text/*", "audio/x-lrc", "*/*")) },
+                        onClick = { importLyricsLauncher.launch(arrayOf("application/octet-stream", "text/*", "application/xml", "audio/x-lrc", "application/x-subrip", "*/*")) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Subtitles, contentDescription = null)
@@ -185,6 +190,9 @@ private fun FolderRow(folder: ImportedFolder, onRemove: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                 Text(folder.uri.toString(), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (folder.availability != "Available") {
+                    Text(folder.lastError ?: "授权失效，请重新导入该文件夹", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
             }
             IconButton(onClick = onRemove) {
                 Icon(Icons.Default.DeleteOutline, contentDescription = "移除文件夹")

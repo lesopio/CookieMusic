@@ -135,7 +135,7 @@ fun FavoritesScreen(
             }
             when {
                 selectedPlaylist != null -> PlaylistDetail(selectedPlaylist, allSongs, viewModel, onOpenPlayer)
-                currentTab == FavoriteRootTab.Favorites -> FavoriteSongs(allSongs.filter { favorites.contains(it.id) }, favorites, viewModel, onSongClick, isLandscape)
+                currentTab == FavoriteRootTab.Favorites -> FavoriteSongs(allSongs.filter { favorites.contains(it.canonicalId) }, favorites, viewModel, onSongClick, isLandscape)
                 else -> PlaylistList(playlists, onOpen = { selectedPlaylistId = it.id })
             }
         }
@@ -168,7 +168,7 @@ fun FavoritesScreen(
 @Composable
 private fun FavoriteSongs(
     songs: List<Song>,
-    favorites: Set<Long>,
+    favorites: Set<String>,
     viewModel: PlayerViewModel,
     onSongClick: (Song) -> Unit,
     isLandscape: Boolean
@@ -183,7 +183,7 @@ private fun FavoriteSongs(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(songs, key = { it.id }) { song ->
-                SongItem(song, favorites.contains(song.id), { onSongClick(song) }, { viewModel.toggleFavorite(song.id) })
+                SongItem(song, favorites.contains(song.canonicalId), { onSongClick(song) }, { viewModel.toggleFavorite(song.canonicalId) })
             }
         }
     } else {
@@ -192,7 +192,7 @@ private fun FavoriteSongs(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(songs, key = { it.id }) { song ->
-                SongItem(song, favorites.contains(song.id), { onSongClick(song) }, { viewModel.toggleFavorite(song.id) })
+                SongItem(song, favorites.contains(song.canonicalId), { onSongClick(song) }, { viewModel.toggleFavorite(song.canonicalId) })
             }
         }
     }
@@ -236,7 +236,7 @@ private fun PlaylistDetail(
     viewModel: PlayerViewModel,
     onOpenPlayer: () -> Unit
 ) {
-    val songsById = remember(allSongs) { allSongs.associateBy { it.id } }
+    val songsById = remember(allSongs) { allSongs.associateBy { it.canonicalId } }
     val songs = playlist.songIds.mapNotNull { songsById[it] }
     if (songs.isEmpty()) {
         EmptyFavoriteState("歌单里还没有可播放歌曲")
@@ -272,12 +272,12 @@ private fun PlaylistDetail(
                 Column(Modifier.weight(1f)) {
                     SongItem(
                         song = song,
-                        isFavorite = viewModel.isFavorite(song.id),
+                        isFavorite = viewModel.isFavorite(song.canonicalId),
                         onClick = {
                             viewModel.playPlaylist(playlist.id, index)
                             onOpenPlayer()
                         },
-                        onFavoriteClick = { viewModel.toggleFavorite(song.id) }
+                        onFavoriteClick = { viewModel.toggleFavorite(song.canonicalId) }
                     )
                 }
                 Column {
@@ -287,7 +287,7 @@ private fun PlaylistDetail(
                     IconButton(onClick = { if (index < songs.lastIndex) viewModel.moveSongInPlaylist(playlist.id, index, index + 1) }) {
                         Icon(Icons.Default.KeyboardArrowDown, contentDescription = "下移")
                     }
-                    IconButton(onClick = { viewModel.removeSongFromPlaylist(playlist.id, song.id) }) {
+                    IconButton(onClick = { viewModel.removeSongFromPlaylist(playlist.id, song.canonicalId) }) {
                         Icon(Icons.Default.Delete, contentDescription = "移除")
                     }
                 }

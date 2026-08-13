@@ -20,11 +20,7 @@ goto fail
 :execute
 set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
 "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
-:end
-if "%ERRORLEVEL%" equ 0 goto mainEnd
+exit /b %ERRORLEVEL%
 :fail
 if not "" == "%GRADLE_EXIT_CONSOLE%" exit 1
 exit /b 1
-:mainEnd
-if "%OS%"=="Windows_NT" endlocal
-:omega

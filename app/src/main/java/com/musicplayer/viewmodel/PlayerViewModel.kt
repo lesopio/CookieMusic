@@ -8,12 +8,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.musicplayer.data.AppColorSettings
+import com.musicplayer.data.AudioVisualizationState
+import com.musicplayer.data.BilingualLyricsIndexSummary
 import com.musicplayer.data.EqualizerPreset
 import com.musicplayer.data.EqualizerState
 import com.musicplayer.data.FlowingBackgroundSettings
 import com.musicplayer.data.ImportedFolder
 import com.musicplayer.data.LyricLine
 import com.musicplayer.data.OverlayLyricsSettings
+import com.musicplayer.data.PlayerAnimationPerformanceMode
+import com.musicplayer.data.PlayerPageTheme
 import com.musicplayer.data.PlaybackMode
 import com.musicplayer.data.Playlist
 import com.musicplayer.data.PlayerState
@@ -54,8 +58,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchResults = MutableStateFlow<List<Song>>(emptyList())
     val searchResults: StateFlow<List<Song>> = _searchResults.asStateFlow()
 
-    private val _favorites = MutableStateFlow<Set<Long>>(emptySet())
-    val favorites: StateFlow<Set<Long>> = _favorites.asStateFlow()
+    private val _favorites = MutableStateFlow<Set<String>>(emptySet())
+    val favorites: StateFlow<Set<String>> = _favorites.asStateFlow()
+
+    private val _libraryUiState = MutableStateFlow<LibraryUiState>(LibraryUiState.Loading)
+    val libraryUiState: StateFlow<LibraryUiState> = _libraryUiState.asStateFlow()
+
+    private val _isImportingSongs = MutableStateFlow(false)
+    val isImportingSongs: StateFlow<Boolean> = _isImportingSongs.asStateFlow()
 
     private val _equalizerState = MutableStateFlow(loadEqualizerState())
     val equalizerState: StateFlow<EqualizerState> = _equalizerState.asStateFlow()
@@ -75,6 +85,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _flowingBackgroundSettings = MutableStateFlow(loadFlowingBackgroundSettings())
     val flowingBackgroundSettings: StateFlow<FlowingBackgroundSettings> = _flowingBackgroundSettings.asStateFlow()
 
+    private val _audioVisualizationState = MutableStateFlow(AudioVisualizationState())
+    val audioVisualizationState: StateFlow<AudioVisualizationState> = _audioVisualizationState.asStateFlow()
+
     private val _isImportingFolder = MutableStateFlow(false)
     val isImportingFolder: StateFlow<Boolean> = _isImportingFolder.asStateFlow()
 
@@ -87,6 +100,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
 
+    private val _bilingualLyricsIndexState = MutableStateFlow(BilingualLyricsIndexState())
+    val bilingualLyricsIndexState: StateFlow<BilingualLyricsIndexState> = _bilingualLyricsIndexState.asStateFlow()
+
     private var positionUpdateJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var overlayPauseHideJob: Job? = null
@@ -98,7 +114,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var metadataLyricsApplied = false
     private var lastHistorySongId: Long? = null
     private var lastHistoryAt: Long = 0L
-    private val importedSongMap = linkedMapOf<Long, Song>()
+    private val importedSongMap = linkedMapOf<String, Song>()
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _playerState.value = _playerState.value.copy(isPlaying = isPlaying)
@@ -128,17 +144,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _playerState.value = _playerState.value.copy(duration = musicController.duration)
             }
         }
+
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            _playerState.value = _playerState.value.copy(playbackMode = musicController.playbackMode)
+        }
+
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            _playerState.value = _playerState.value.copy(playbackMode = musicController.playbackMode)
+        }
     }
 
     init {
-        _favorites.value = repository.loadFavorites()
         musicController.connect()
         startPositionUpdates()
         setupPlayerListener()
         observeControllerConnection()
         scanSongs()
+        viewModelScope.launch { _favorites.value = repository.loadFavorites() }
         viewModelScope.launch { _playHistory.value = repository.loadPlayHistory() }
-        viewModelScope.launch { _playlists.value = repository.loadPlaylists() }
     }
 
     private fun setupPlayerListener() {
@@ -164,7 +187,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             queueIndex = index,
             currentPosition = musicController.currentPosition,
             duration = musicController.duration,
-            isPlaying = musicController.isPlaying
+            isPlaying = musicController.isPlaying,
+            playbackMode = musicController.playbackMode
         )
         if (musicController.isPlaying) {
             scheduleHistoryRecord(syncedSong)
@@ -176,27 +200,46 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun scanSongs() {
         viewModelScope.launch {
-            val scannedSongs = repository.scanSongs()
-            val imported = repository.loadImportedSongs()
-            importedSongMap.clear()
-            imported.forEach { song ->
-                importedSongMap[song.id] = song
+            if (_allSongs.value.isEmpty()) _libraryUiState.value = LibraryUiState.Loading
+            val cached = repository.loadCachedSongs()
+            if (cached.isNotEmpty()) {
+                _allSongs.value = cached.sortedBy { it.title.lowercase() }
+                _libraryUiState.value = LibraryUiState.Content(cached.size)
             }
-            _importedSongs.value = imported
-            _importedFolders.value = repository.loadImportedFolders()
-            _allSongs.value = mergeSongs(scannedSongs, importedSongMap.values)
+            val imported = runCatching { reloadImportedLibrary() }.getOrDefault(emptyList())
+            if (imported.isNotEmpty()) {
+                _allSongs.value = mergeSongs(emptyList(), imported)
+                _libraryUiState.value = LibraryUiState.Content(imported.size)
+            }
+            runCatching { repository.scanSongs() }
+                .onSuccess { scannedSongs ->
+                    _allSongs.value = mergeSongs(scannedSongs, importedSongMap.values)
+                    _libraryUiState.value = if (_allSongs.value.isEmpty()) LibraryUiState.Empty else LibraryUiState.Content(_allSongs.value.size)
+                    viewModelScope.launch { _favorites.value = repository.loadFavorites() }
+                    viewModelScope.launch { _playlists.value = repository.loadPlaylists() }
+                }
+                .onFailure { error ->
+                    _libraryUiState.value = if (_allSongs.value.isEmpty()) LibraryUiState.Error(error.message ?: "扫描失败") else LibraryUiState.Content(_allSongs.value.size)
+                    _snackbarEvent.value = "扫描失败：${error.message ?: "请检查媒体权限"}"
+                }
         }
     }
 
     fun importSongs(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
+            if (_isImportingSongs.value) return@launch
+            _isImportingSongs.value = true
             val imported = repository.importSongs(uris)
-            imported.forEach { song ->
-                importedSongMap[song.id] = song
+            val importedSongs = reloadImportedLibrary()
+            _allSongs.value = mergeSongs(repository.scanSongs(), importedSongs)
+            val failed = (uris.size - imported.size).coerceAtLeast(0)
+            _snackbarEvent.value = when {
+                imported.isEmpty() -> "导入失败：未获得持久读取权限或文件无法解析"
+                failed > 0 -> "导入完成：${imported.size} 首，失败 $failed 首"
+                else -> "导入完成：${imported.size} 首"
             }
-            _importedSongs.value = mergeSongs(_importedSongs.value, imported)
-            _allSongs.value = mergeSongs(_allSongs.value, importedSongMap.values)
+            _isImportingSongs.value = false
         }
     }
 
@@ -210,11 +253,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             result.songs.forEach { song ->
-                importedSongMap[song.id] = song
+                importedSongMap[song.canonicalId] = song
             }
-            _importedSongs.value = repository.loadImportedSongs()
-            _importedFolders.value = repository.loadImportedFolders()
-            _allSongs.value = mergeSongs(_allSongs.value, importedSongMap.values)
+            val imported = reloadImportedLibrary()
+            _allSongs.value = mergeSongs(repository.scanSongs(), imported)
             _isImportingFolder.value = false
             _snackbarEvent.value = "导入完成：${result.songs.size} 首，跳过 ${result.skipped} 项"
         }
@@ -222,21 +264,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun removeImportedSong(song: Song) {
         viewModelScope.launch {
-            val imported = repository.removeImportedSong(song)
-            importedSongMap.clear()
-            imported.forEach { importedSongMap[it.id] = it }
-            _importedSongs.value = imported
+            repository.removeImportedSong(song)
+            reloadImportedLibrary()
             _allSongs.value = mergeSongs(repository.scanSongs(), importedSongMap.values)
         }
     }
 
     fun removeImportedFolder(folder: ImportedFolder) {
         viewModelScope.launch {
-            val imported = repository.removeImportedFolder(folder)
-            importedSongMap.clear()
-            imported.forEach { importedSongMap[it.id] = it }
-            _importedSongs.value = imported
-            _importedFolders.value = repository.loadImportedFolders()
+            repository.removeImportedFolder(folder)
+            reloadImportedLibrary()
             _allSongs.value = mergeSongs(repository.scanSongs(), importedSongMap.values)
         }
     }
@@ -246,6 +283,46 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             repository.importLyrics(uris, _allSongs.value)
             reloadLyricsForCurrentSong()
+        }
+    }
+
+    fun indexBilingualLyrics() {
+        if (_bilingualLyricsIndexState.value.running) return
+        viewModelScope.launch {
+            val songs = _allSongs.value
+            if (songs.isEmpty()) {
+                _bilingualLyricsIndexState.value = BilingualLyricsIndexState(message = "曲库为空，先导入或扫描歌曲")
+                return@launch
+            }
+            _bilingualLyricsIndexState.value = BilingualLyricsIndexState(
+                running = true,
+                total = songs.size,
+                message = "正在准备索引"
+            )
+            val summary = runCatching {
+                repository.indexBilingualLyrics(songs) { processed, total, currentTitle ->
+                    _bilingualLyricsIndexState.value = _bilingualLyricsIndexState.value.copy(
+                        running = processed < total,
+                        processed = processed,
+                        total = total,
+                        currentTitle = currentTitle,
+                        message = if (processed < total) "正在识别歌词双语结构" else "正在保存索引"
+                    )
+                }
+            }.getOrElse { error ->
+                _bilingualLyricsIndexState.value = _bilingualLyricsIndexState.value.copy(
+                    running = false,
+                    message = "索引失败：${error.message ?: "未知错误"}"
+                )
+                return@launch
+            }
+            _bilingualLyricsIndexState.value = BilingualLyricsIndexState(
+                running = false,
+                processed = summary.totalSongs,
+                total = summary.totalSongs,
+                summary = summary,
+                message = "索引完成"
+            )
         }
     }
 
@@ -299,18 +376,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         musicController.setPlaybackMode(newMode)
     }
 
+    fun setPlaybackMode(mode: PlaybackMode) {
+        _playerState.value = _playerState.value.copy(playbackMode = mode)
+        musicController.setPlaybackMode(mode)
+    }
+
     fun consumeSnackbar() {
         _snackbarEvent.value = null
     }
 
-    fun toggleFavorite(songId: Long) {
+    fun toggleFavorite(songId: String) {
         val favs = _favorites.value.toMutableSet()
         if (favs.contains(songId)) favs.remove(songId) else favs.add(songId)
         _favorites.value = favs
-        repository.saveFavorites(favs)
+        viewModelScope.launch { repository.saveFavorites(favs) }
     }
 
-    fun isFavorite(songId: Long): Boolean = _favorites.value.contains(songId)
+    fun isFavorite(songId: String): Boolean = _favorites.value.contains(songId)
 
     fun setEqualizerPreset(preset: EqualizerPreset) {
         val current = _equalizerState.value
@@ -464,11 +546,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateFlowingBackgroundSettings(settings: FlowingBackgroundSettings) {
-        val normalized = settings.copy(intensity = settings.intensity.coerceIn(0.2f, 1f))
+        val normalized = normalizeFlowingBackgroundSettings(settings)
         _flowingBackgroundSettings.value = normalized
         preferences.edit()
             .putBoolean(KEY_FLOWING_BACKGROUND_ENABLED, normalized.enabled)
             .putFloat(KEY_FLOWING_BACKGROUND_INTENSITY, normalized.intensity)
+            .putBoolean(KEY_STAGE_PARTICLES_ENABLED, normalized.stageParticlesEnabled)
+            .putBoolean(KEY_BEAT_REACTIVE_ENABLED, normalized.beatReactiveEnabled)
+            .putBoolean(KEY_COVER_MOTION_ENABLED, normalized.coverMotionEnabled)
+            .putBoolean(KEY_LYRIC_PARTICLES_ENABLED, normalized.lyricParticlesEnabled)
+            .putBoolean(KEY_PROGRESS_PARTICLES_ENABLED, normalized.progressParticlesEnabled)
+            .putBoolean(KEY_CAPSULE_COVER_ROTATION_ENABLED, normalized.capsuleCoverRotationEnabled)
+            .putBoolean(KEY_COMPACT_LYRICS_PREVIEW_ENABLED, normalized.compactLyricsPreviewEnabled)
+            .putBoolean(KEY_SONG_CHANGE_TRANSITION_ENABLED, normalized.songChangeTransitionEnabled)
+            .putFloat(KEY_VISUALIZER_SENSITIVITY, normalized.visualizerSensitivity)
+            .putString(KEY_ANIMATION_PERFORMANCE_MODE, normalized.performanceMode.name)
+            .putString(KEY_PLAYER_PAGE_THEME, normalized.pageTheme.name)
             .apply()
     }
 
@@ -551,7 +644,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         updatePlaylists(_playlists.value + playlist)
     }
 
-    fun createPlaylistWithSong(name: String, songId: Long) {
+    fun createPlaylistWithSong(name: String, songId: String) {
         val trimmed = name.trim().ifBlank { "新建歌单" }
         val now = System.currentTimeMillis()
         val playlist = Playlist(id = now, name = trimmed, songIds = listOf(songId), createdAt = now, updatedAt = now)
@@ -569,7 +662,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         updatePlaylists(_playlists.value.filterNot { it.id == id })
     }
 
-    fun addSongToPlaylist(playlistId: Long, songId: Long) {
+    fun addSongToPlaylist(playlistId: Long, songId: String) {
         updatePlaylists(_playlists.value.map { playlist ->
             if (playlist.id == playlistId && songId !in playlist.songIds) {
                 playlist.copy(songIds = playlist.songIds + songId, updatedAt = System.currentTimeMillis())
@@ -579,7 +672,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         })
     }
 
-    fun removeSongFromPlaylist(playlistId: Long, songId: Long) {
+    fun removeSongFromPlaylist(playlistId: Long, songId: String) {
         updatePlaylists(_playlists.value.map { playlist ->
             if (playlist.id == playlistId) playlist.copy(songIds = playlist.songIds.filterNot { it == songId }, updatedAt = System.currentTimeMillis()) else playlist
         })
@@ -600,7 +693,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun playPlaylist(playlistId: Long, startIndex: Int = 0) {
         val playlist = _playlists.value.firstOrNull { it.id == playlistId } ?: return
-        val songsById = _allSongs.value.associateBy { it.id }
+        val songsById = _allSongs.value.associateBy { it.canonicalId }
         val songs = playlist.songIds.mapNotNull { songsById[it] }
         if (songs.isEmpty()) return
         val index = startIndex.coerceIn(songs.indices)
@@ -688,20 +781,76 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun currentLyricText(state: PlayerState): String {
         val index = state.currentLyricIndex
-        return state.lyrics.getOrNull(index)?.text.orEmpty().trim()
+        return state.lyrics.getOrNull(index)?.primaryText.orEmpty().trim()
     }
 
     private fun currentLyricIndex(lines: List<LyricLine>, positionMs: Long): Int {
         if (lines.isEmpty()) return -1
-        val index = lines.indexOfLast { it.timeMs <= positionMs + 250L }
+        val index = lines.indexOfLast { it.timeMs <= positionMs }
         return index.coerceAtLeast(0)
     }
 
     private fun mergeSongs(first: Iterable<Song>, second: Iterable<Song>): List<Song> {
-        return linkedMapOf<Long, Song>().apply {
-            first.forEach { put(it.id, it) }
-            second.forEach { put(it.id, it) }
-        }.values.sortedBy { it.title.lowercase() }
+        val merged = linkedMapOf<String, Song>()
+        fun putSong(song: Song) {
+            val existing = merged[song.canonicalId]
+            if (existing?.imported == true && !song.imported) {
+                merged[song.canonicalId] = song
+            } else if (existing == null) {
+                merged[song.canonicalId] = song
+            }
+        }
+        first.forEach(::putSong)
+        second.forEach(::putSong)
+        return merged.values.sortedBy { it.title.lowercase() }
+    }
+
+    private fun Song.identityKeys(): List<String> {
+        val titleKey = title.identityPart()
+        val artistKey = artist.identityPart().takeUnless { it in UNKNOWN_ARTIST_KEYS }.orEmpty()
+        val fileKey = sourcePath
+            ?.substringAfterLast('/')
+            ?.substringBeforeLast('.')
+            ?.identityPart()
+            .orEmpty()
+        val durationBucket = if (duration > 0) (duration / 1000L).toString() else "0"
+        val durationBuckets = durationBuckets()
+        return (
+            durationBuckets.map { "meta:$titleKey:$artistKey:$it" } +
+                durationBuckets.map { "file:$fileKey:$it" } +
+                listOf(
+                    "file:$fileKey",
+                    "meta:$titleKey:$artistKey:$durationBucket",
+                    "file:$fileKey:$durationBucket",
+                    "uri:${uri}"
+                )
+            ).filterNot { key ->
+            key.startsWith("meta::") || key.startsWith("file::")
+        }
+    }
+
+    private fun Song.durationBuckets(): List<String> {
+        if (duration <= 0) return listOf("0")
+        val seconds = duration / 1000L
+        return ((seconds - 2)..(seconds + 2)).map { it.coerceAtLeast(1L).toString() }.distinct()
+    }
+
+    private fun String.identityPart(): String {
+        return lowercase()
+            .replace(Regex("""\.[a-z0-9]{2,5}$"""), "")
+            .replace(Regex("""\s+"""), "")
+            .replace(Regex("""[《》<>\[\]【】()（）_\-.,，。'"]"""), "")
+    }
+
+    private suspend fun reloadImportedLibrary(): List<Song> {
+        val imported = repository.loadImportedSongs()
+        importedSongMap.clear()
+        imported.forEach { song ->
+            importedSongMap[song.canonicalId] = song
+        }
+        _importedSongs.value = imported
+        _importedFolders.value = repository.loadImportedFolders()
+        return imported
     }
 
     private fun loadThemeMode(): ThemeMode {
@@ -760,8 +909,42 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadFlowingBackgroundSettings() = FlowingBackgroundSettings(
         enabled = preferences.getBoolean(KEY_FLOWING_BACKGROUND_ENABLED, true),
-        intensity = preferences.getFloat(KEY_FLOWING_BACKGROUND_INTENSITY, 0.55f).coerceIn(0.2f, 1f)
-    )
+        intensity = preferences.getFloat(KEY_FLOWING_BACKGROUND_INTENSITY, 0.72f).coerceIn(0.2f, 1f),
+        stageParticlesEnabled = false,
+        beatReactiveEnabled = preferences.getBoolean(KEY_BEAT_REACTIVE_ENABLED, true),
+        coverMotionEnabled = false,
+        lyricParticlesEnabled = false,
+        progressParticlesEnabled = false,
+        capsuleCoverRotationEnabled = preferences.getBoolean(KEY_CAPSULE_COVER_ROTATION_ENABLED, true),
+        compactLyricsPreviewEnabled = preferences.getBoolean(KEY_COMPACT_LYRICS_PREVIEW_ENABLED, true),
+        songChangeTransitionEnabled = preferences.getBoolean(KEY_SONG_CHANGE_TRANSITION_ENABLED, false),
+        visualizerSensitivity = preferences.getFloat(KEY_VISUALIZER_SENSITIVITY, 0.72f).coerceIn(0.2f, 1.5f),
+        performanceMode = preferences.getString(KEY_ANIMATION_PERFORMANCE_MODE, PlayerAnimationPerformanceMode.Atmosphere.name)
+            ?.let { value -> PlayerAnimationPerformanceMode.entries.firstOrNull { it.name == value } }
+            ?: PlayerAnimationPerformanceMode.Atmosphere,
+        pageTheme = preferences.getString(KEY_PLAYER_PAGE_THEME, PlayerPageTheme.Current.name)
+            ?.let { value -> PlayerPageTheme.entries.firstOrNull { it.name == value } }
+            ?: PlayerPageTheme.Current
+    ).let(::normalizeFlowingBackgroundSettings)
+
+    private fun normalizeFlowingBackgroundSettings(settings: FlowingBackgroundSettings): FlowingBackgroundSettings {
+        val mode = settings.performanceMode
+        val lowPower = mode == PlayerAnimationPerformanceMode.Low
+        return settings.copy(
+            enabled = settings.enabled && !lowPower,
+            intensity = settings.intensity.coerceIn(0.2f, 1f),
+            stageParticlesEnabled = false,
+            beatReactiveEnabled = settings.beatReactiveEnabled && !lowPower,
+            coverMotionEnabled = false,
+            lyricParticlesEnabled = false,
+            progressParticlesEnabled = false,
+            capsuleCoverRotationEnabled = settings.capsuleCoverRotationEnabled && !lowPower,
+            compactLyricsPreviewEnabled = settings.compactLyricsPreviewEnabled,
+            songChangeTransitionEnabled = settings.songChangeTransitionEnabled,
+            pageTheme = settings.pageTheme,
+            visualizerSensitivity = settings.visualizerSensitivity.coerceIn(0.2f, 1.5f)
+        )
+    }
 
     private fun saveOverlayLyricsSettings(settings: OverlayLyricsSettings) {
         preferences.edit()
@@ -832,6 +1015,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val KEY_LOUDNESS_GAIN = "loudness_gain"
         const val KEY_FLOWING_BACKGROUND_ENABLED = "flowing_background_enabled"
         const val KEY_FLOWING_BACKGROUND_INTENSITY = "flowing_background_intensity"
+        const val KEY_STAGE_PARTICLES_ENABLED = "stage_particles_enabled"
+        const val KEY_BEAT_REACTIVE_ENABLED = "beat_reactive_enabled"
+        const val KEY_COVER_MOTION_ENABLED = "cover_motion_enabled"
+        const val KEY_LYRIC_PARTICLES_ENABLED = "lyric_particles_enabled"
+        const val KEY_PROGRESS_PARTICLES_ENABLED = "progress_particles_enabled"
+        const val KEY_CAPSULE_COVER_ROTATION_ENABLED = "capsule_cover_rotation_enabled"
+        const val KEY_COMPACT_LYRICS_PREVIEW_ENABLED = "compact_lyrics_preview_enabled"
+        const val KEY_SONG_CHANGE_TRANSITION_ENABLED = "song_change_transition_enabled"
+        const val KEY_VISUALIZER_SENSITIVITY = "visualizer_sensitivity"
+        const val KEY_ANIMATION_PERFORMANCE_MODE = "animation_performance_mode"
+        const val KEY_PLAYER_PAGE_THEME = "player_page_theme"
         const val PAUSED_OVERLAY_TEXT = "播放已暂停，将关闭状态栏歌词"
+        val UNKNOWN_ARTIST_KEYS = setOf("", "未知艺术家", "unknownartist", "unknown")
     }
+}
+
+data class BilingualLyricsIndexState(
+    val running: Boolean = false,
+    val processed: Int = 0,
+    val total: Int = 0,
+    val currentTitle: String = "",
+    val summary: BilingualLyricsIndexSummary? = null,
+    val message: String = "尚未索引"
+)
+
+sealed interface LibraryUiState {
+    data object Loading : LibraryUiState
+    data object Empty : LibraryUiState
+    data class Content(val count: Int) : LibraryUiState
+    data class PermissionDenied(val permission: String = "媒体读取权限") : LibraryUiState
+    data class Error(val message: String) : LibraryUiState
 }

@@ -24,3 +24,9 @@ local-repo/
 # OS metadata
 .DS_Store
 Thumbs.db
+.alma-snapshots
+
+# Local signing keys, device samples and remote attachments
+release-signing/
+test-screenshots/phone-lyrics-samples/
+.codex-remote-attachments/

@@ -2,6 +2,7 @@ package com.musicplayer.ui.components
 
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -36,15 +37,7 @@ fun AlbumArtImage(
     val bitmap = produceState<android.graphics.Bitmap?>(initialValue = null, song.uri) {
         value = withContext(Dispatchers.IO) {
             runCatching {
-                val retriever = MediaMetadataRetriever()
-                try {
-                    retriever.setDataSource(context, song.uri)
-                    retriever.embeddedPicture?.let { bytes ->
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    }
-                } finally {
-                    retriever.release()
-                }
+                loadEmbeddedBitmap(context, song, 768)
             }.getOrNull()
         }
     }
@@ -65,14 +58,14 @@ fun AlbumArtImage(
         )
     } else {
         Box(
-            modifier = modifier.background(MaterialTheme.colorScheme.primaryContainer),
+            modifier = modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = null,
                 modifier = fallbackModifier,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
             )
         }
     }
@@ -93,21 +86,51 @@ fun rememberAlbumAccentColor(song: Song?, fallback: Color = MaterialTheme.colorS
 
 private fun loadAlbumBitmap(context: android.content.Context, song: Song?): android.graphics.Bitmap? {
     if (song == null) return null
+    AlbumArtMemoryCache.get(song.uri.toString())?.let { return it }
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, song.uri)
-        retriever.embeddedPicture?.let { bytes ->
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        retriever.embeddedPicture?.let { bytes -> decodeSampled(bytes, 768) }?.also {
+            AlbumArtMemoryCache.put(song.uri.toString(), it)
         } ?: song.albumArtUri?.let { uri ->
             context.contentResolver.openInputStream(uri)?.use { input ->
                 BitmapFactory.decodeStream(input)
-            }
+            }?.also { AlbumArtMemoryCache.put(song.uri.toString(), it) }
         }
     } catch (_: Exception) {
         null
     } finally {
         runCatching { retriever.release() }
     }
+}
+
+private fun loadEmbeddedBitmap(context: android.content.Context, song: Song, targetPx: Int): android.graphics.Bitmap? {
+    AlbumArtMemoryCache.get(song.uri.toString())?.let { return it }
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, song.uri)
+        retriever.embeddedPicture?.let { decodeSampled(it, targetPx) }
+            ?.also { AlbumArtMemoryCache.put(song.uri.toString(), it) }
+    } finally {
+        runCatching { retriever.release() }
+    }
+}
+
+private fun decodeSampled(bytes: ByteArray, targetPx: Int): android.graphics.Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    while (bounds.outWidth / sample > targetPx * 2 || bounds.outHeight / sample > targetPx * 2) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+}
+
+private object AlbumArtMemoryCache {
+    private val cache = object : LruCache<String, android.graphics.Bitmap>(16 * 1024) {
+        override fun sizeOf(key: String, value: android.graphics.Bitmap): Int = value.byteCount / 1024
+    }
+    fun get(key: String): android.graphics.Bitmap? = cache.get(key)
+    fun put(key: String, value: android.graphics.Bitmap) { cache.put(key, value) }
 }
 
 private fun dominantColor(bitmap: android.graphics.Bitmap): Color? {

@@ -20,5 +20,18 @@ enum class PlaybackMode {
 
 data class LyricLine(
     val timeMs: Long,
-    val text: String
+    val text: String,
+    val endTimeMs: Long? = null,
+    val translation: String? = null,
+    val romanization: String? = null,
+    val words: List<LyricWord> = emptyList()
+) {
+    val primaryText: String get() = text
+    val displayText: String get() = listOfNotNull(text, translation, romanization).joinToString("\n")
+}
+
+data class LyricWord(
+    val text: String,
+    val startMs: Long,
+    val endMs: Long
 )

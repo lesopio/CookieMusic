@@ -1,10 +1,15 @@
 package com.musicplayer.ui.screens
 
+import android.os.Build
+import androidx.activity.ComponentActivity
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -23,39 +29,60 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.toArgb
+import com.musicplayer.data.AudioVisualizationState
+import com.musicplayer.data.FlowingBackgroundSettings
 import com.musicplayer.data.LyricLine
 import com.musicplayer.data.PlayerState
 import com.musicplayer.data.Song
+import com.musicplayer.ui.components.AlbumArtImage
 import com.musicplayer.ui.components.FlowingBlurBackground
 import com.musicplayer.ui.components.MiniPlayer
+import com.musicplayer.ui.components.StructuredLyricText
 import com.musicplayer.ui.components.rememberAlbumAccentColor
 import com.musicplayer.viewmodel.PlayerViewModel
 import kotlinx.coroutines.launch
@@ -65,20 +92,23 @@ import kotlin.math.roundToInt
 fun LyricsScreen(
     viewModel: PlayerViewModel,
     onBackClick: () -> Unit,
+    darkTheme: Boolean = false,
     windowSizeClass: WindowSizeClass
 ) {
     val state by viewModel.playerState.collectAsState()
-    val flowingBackgroundSettings by viewModel.flowingBackgroundSettings.collectAsState()
+    val settings by viewModel.flowingBackgroundSettings.collectAsState()
+    val visualizer by viewModel.audioVisualizationState.collectAsState()
     val song = state.currentSong
     val accent by rememberAlbumAccentColor(song)
     val isLandscape = windowSizeClass.widthSizeClass >= WindowWidthSizeClass.Expanded
     val dragOffset = remember { Animatable(0f) }
     val dragScope = rememberCoroutineScope()
+    val palette = rememberPlayerVisualPalette(accent, darkTheme)
+    LyricsNavigationBarEffect(palette.backgroundBottom, darkTheme)
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .offset { IntOffset(0, dragOffset.value.roundToInt()) }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
@@ -94,9 +124,7 @@ fun LyricsScreen(
                         }
                     },
                     onDragCancel = {
-                        dragScope.launch {
-                            dragOffset.animateTo(0f, tween(180, easing = FastOutSlowInEasing))
-                        }
+                        dragScope.launch { dragOffset.animateTo(0f, tween(180, easing = FastOutSlowInEasing)) }
                     }
                 ) { _, dragAmount ->
                     dragScope.launch {
@@ -105,18 +133,14 @@ fun LyricsScreen(
                 }
             }
     ) {
-        FlowingBlurBackground(
-            song = song,
-            accent = accent,
-            isPlaying = state.isPlaying,
-            enabled = flowingBackgroundSettings.enabled,
-            intensity = flowingBackgroundSettings.intensity
-        )
         LyricsPageContent(
             state = state,
             viewModel = viewModel,
             song = song,
             accent = accent,
+            darkTheme = darkTheme,
+            animationSettings = settings,
+            visualizerState = visualizer,
             isLandscape = isLandscape,
             onBackClick = onBackClick,
             modifier = Modifier.fillMaxSize()
@@ -132,105 +156,188 @@ fun LyricsPageContent(
     accent: Color,
     isLandscape: Boolean,
     onBackClick: () -> Unit,
-    onMiniPlayerClick: () -> Unit = onBackClick,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    darkTheme: Boolean = false,
+    animationSettings: FlowingBackgroundSettings = FlowingBackgroundSettings(),
+    visualizerState: AudioVisualizationState = AudioVisualizationState(),
+    drawBackground: Boolean = true,
+    onMiniPlayerClick: () -> Unit = onBackClick
 ) {
+    val palette = rememberPlayerVisualPalette(accent, darkTheme)
+    val density = LocalDensity.current
+    var miniDockHeightPx by remember { mutableIntStateOf(0) }
+    val lyricsBottomPadding = if (song != null) {
+        with(density) { miniDockHeightPx.toDp() } + 24.dp
+    } else {
+        112.dp
+    }
     Box(modifier) {
+        if (drawBackground) {
+            LyricsBackgroundLayer(
+                song = song,
+                accent = accent,
+                palette = palette,
+                isPlaying = state.isPlaying,
+                animationSettings = animationSettings,
+                visualizerState = visualizerState,
+                darkTheme = darkTheme
+            )
+        }
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBackClick) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("歌词", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    if (song != null) {
-                        Text(
-                            song.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(Modifier.size(48.dp))
-            }
+            LyricsTopBar(song = song, palette = palette, onBackClick = onBackClick)
             if (state.lyrics.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("当前歌曲没有歌词", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text("当前歌曲没有歌词", color = palette.secondaryText)
                 }
             } else {
-                FullLyricsList(
+                FocusLyricsList(
                     lines = state.lyrics,
                     currentIndex = state.currentLyricIndex,
                     isPlaying = state.isPlaying,
                     currentPosition = state.currentPosition,
                     duration = state.duration,
                     accent = accent,
+                    palette = palette,
+                    visualizerState = visualizerState,
                     isLandscape = isLandscape,
-                    hasMiniPlayer = song != null,
+                    bottomPadding = lyricsBottomPadding,
                     onLineClick = viewModel::seekToLyric,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
         if (song != null) {
-            val progress = if (state.duration > 0) {
-                state.currentPosition.toFloat() / state.duration.toFloat()
-            } else {
-                0f
-            }
-            MiniPlayer(
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(280.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                palette.backgroundBottom.copy(alpha = if (palette.dark) 0.78f else 0.82f)
+                            )
+                        )
+                    )
+            )
+            LyricsMiniDock(
                 song = song,
                 isPlaying = state.isPlaying,
-                progress = progress,
+                progress = if (state.duration > 0) state.currentPosition.toFloat() / state.duration.toFloat() else 0f,
+                accent = accent,
+                palette = palette,
                 onPlayPause = viewModel::playPause,
                 onPrevious = viewModel::previous,
                 onNext = viewModel::next,
                 onClick = onMiniPlayerClick,
-                modifier = Modifier.align(Alignment.BottomCenter)
+                rotateCover = animationSettings.capsuleCoverRotationEnabled && state.isPlaying,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onSizeChanged { miniDockHeightPx = it.height }
             )
         }
     }
 }
 
 @Composable
-private fun FullLyricsList(
+fun LyricsBackgroundLayer(
+    song: Song?,
+    accent: Color,
+    palette: PlayerVisualPalette,
+    isPlaying: Boolean,
+    animationSettings: FlowingBackgroundSettings,
+    visualizerState: AudioVisualizationState,
+    darkTheme: Boolean
+) {
+    FlowingBlurBackground(
+        song = song,
+        accent = accent,
+        isPlaying = isPlaying,
+        enabled = animationSettings.enabled,
+        intensity = animationSettings.intensity,
+        stageParticlesEnabled = false,
+        beatReactiveEnabled = animationSettings.beatReactiveEnabled,
+        visualizerState = visualizerState,
+        darkTheme = darkTheme
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        palette.backgroundTop.copy(alpha = if (darkTheme) 0.48f else 0.28f),
+                        Color.Transparent,
+                        palette.backgroundBottom.copy(alpha = if (darkTheme) 0.66f else 0.78f)
+                    )
+                )
+            )
+    )
+}
+
+@Composable
+private fun LyricsTopBar(song: Song?, palette: PlayerVisualPalette, onBackClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onBackClick) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = palette.icon)
+        }
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("歌词", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = palette.primaryText)
+            if (song != null) {
+                Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, color = palette.secondaryText)
+            }
+        }
+        Spacer(Modifier.size(48.dp))
+    }
+}
+
+@Composable
+private fun FocusLyricsList(
     lines: List<LyricLine>,
     currentIndex: Int,
     isPlaying: Boolean,
     currentPosition: Long,
     duration: Long,
     accent: Color,
+    palette: PlayerVisualPalette,
+    visualizerState: AudioVisualizationState,
     isLandscape: Boolean,
-    hasMiniPlayer: Boolean,
+    bottomPadding: androidx.compose.ui.unit.Dp,
     onLineClick: (LyricLine) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(currentIndex, lines.size) {
+    val displayIndexes = remember(lines) {
+        lines.indices.filter { index -> index == 0 || lines[index].timeMs != lines[index - 1].timeMs }
+    }
+    val safeIndex = currentIndex.coerceIn(0, lines.lastIndex)
+    val currentDisplayIndex = displayIndexes.indexOfLast { it <= safeIndex }.coerceAtLeast(0)
+    LaunchedEffect(currentDisplayIndex, displayIndexes.size) {
         if (currentIndex >= 0 && !listState.isScrollInProgress) {
-            val centerOffset = if (isLandscape) 3 else 4
-            listState.animateScrollToItem((currentIndex - centerOffset).coerceAtLeast(0))
+            val centerOffset = if (isLandscape) 2 else 2
+            listState.animateScrollToItem((currentDisplayIndex - centerOffset).coerceAtLeast(0))
         }
     }
     LazyColumn(
         state = listState,
         modifier = modifier,
         contentPadding = PaddingValues(
-            start = if (isLandscape) 72.dp else 28.dp,
-            end = if (isLandscape) 72.dp else 28.dp,
-            top = if (isLandscape) 42.dp else 96.dp,
-            bottom = if (hasMiniPlayer) 176.dp else if (isLandscape) 42.dp else 96.dp
+            start = if (isLandscape) 84.dp else 30.dp,
+            end = if (isLandscape) 84.dp else 30.dp,
+            top = if (isLandscape) 64.dp else 160.dp,
+            bottom = bottomPadding
         ),
-        verticalArrangement = Arrangement.spacedBy(if (isLandscape) 12.dp else 18.dp)
+        verticalArrangement = Arrangement.spacedBy(if (isLandscape) 18.dp else 28.dp)
     ) {
-        itemsIndexed(lines) { index, line ->
-            val active = index == currentIndex.coerceIn(0, lines.lastIndex)
-            val nextTime = lines.getOrNull(index + 1)?.timeMs
+        itemsIndexed(displayIndexes) { displayIndex, sourceIndex ->
+            val line = lines[sourceIndex]
+            val active = line.timeMs == lines.getOrNull(safeIndex)?.timeMs
+            val distance = kotlin.math.abs(displayIndex - currentDisplayIndex)
+            val nextTime = lines.drop(sourceIndex + 1).firstOrNull { it.timeMs > line.timeMs }?.timeMs
                 ?: duration.takeIf { it > line.timeMs }
                 ?: (line.timeMs + 4_000L)
             val progress = if (active) {
@@ -241,28 +348,196 @@ private fun FullLyricsList(
                     startTime = line.timeMs,
                     endTime = nextTime
                 )
-            } else {
-                0f
-            }
-            if (active) {
-                SmoothKaraokeText(
-                    text = line.text,
-                    progress = progress,
-                    accent = accent,
-                    modifier = Modifier.fillMaxWidth().clickable { onLineClick(line) },
-                    style = if (isLandscape) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
+            } else 0f
+            LyricsLineRow(
+                line = line,
+                active = active,
+                distance = distance,
+                progress = progress,
+                currentPosition = currentPosition,
+                accent = accent,
+                palette = palette,
+                visualizerState = visualizerState,
+                isLandscape = isLandscape,
+                onClick = { onLineClick(line) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsLineRow(
+    line: LyricLine,
+    active: Boolean,
+    distance: Int,
+    progress: Float,
+    currentPosition: Long,
+    accent: Color,
+    palette: PlayerVisualPalette,
+    visualizerState: AudioVisualizationState,
+    isLandscape: Boolean,
+    onClick: () -> Unit
+) {
+    val focusScale by animateFloatAsState(
+        targetValue = if (active) 1f else 0.92f,
+        animationSpec = tween(260, easing = FastOutSlowInEasing),
+        label = "lyric_focus_scale"
+    )
+    val alpha = when {
+        active -> 1f
+        distance == 1 -> 0.48f
+        distance == 2 -> 0.28f
+        else -> 0.16f
+    }
+    val style = when {
+        active && isLandscape -> MaterialTheme.typography.headlineMedium
+        active -> MaterialTheme.typography.headlineSmall
+        isLandscape -> MaterialTheme.typography.titleMedium
+        else -> MaterialTheme.typography.titleLarge
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer(scaleX = focusScale, scaleY = focusScale)
+            .clickable(onClick = onClick)
+            .padding(vertical = if (active) 10.dp else 0.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (active) {
+            StructuredLyricText(
+                line = line,
+                active = true,
+                currentPosition = currentPosition,
+                fallbackProgress = progress,
+                accent = accent,
+                primaryColor = palette.primaryText.copy(alpha = if (palette.dark) 0.74f else 0.76f),
+                secondaryColor = palette.secondaryText.copy(alpha = if (palette.dark) 0.82f else 0.78f),
+                darkTheme = palette.dark,
+                visualizerState = visualizerState,
+                modifier = Modifier.fillMaxWidth(),
+                primaryStyle = style,
+                secondaryStyle = MaterialTheme.typography.titleMedium,
+                activeBackground = true
+            )
+        } else {
+            StructuredLyricText(
+                line = line,
+                active = false,
+                currentPosition = 0L,
+                fallbackProgress = 0f,
+                accent = accent,
+                primaryColor = palette.secondaryText.copy(alpha = alpha.coerceAtLeast(0.22f)),
+                secondaryColor = palette.secondaryText.copy(alpha = (alpha + 0.08f).coerceAtMost(0.56f)),
+                darkTheme = palette.dark,
+                visualizerState = visualizerState,
+                modifier = Modifier.fillMaxWidth(),
+                primaryStyle = style,
+                secondaryStyle = MaterialTheme.typography.bodyMedium,
+                activeBackground = false
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsMiniDock(
+    song: Song,
+    isPlaying: Boolean,
+    progress: Float,
+    accent: Color,
+    palette: PlayerVisualPalette,
+    onPlayPause: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClick: () -> Unit,
+    rotateCover: Boolean,
+    modifier: Modifier = Modifier
+) {
+    MiniPlayer(
+        song = song,
+        isPlaying = isPlaying,
+        progress = progress,
+        onPlayPause = onPlayPause,
+        onPrevious = onPrevious,
+        onNext = onNext,
+        onClick = null,
+        accent = accent,
+        rotateCover = rotateCover,
+        modifier = modifier.navigationBarsPadding()
+    )
+    return
+
+    val glass = if (palette.dark) {
+        palette.controlGlass.copy(alpha = 0.36f)
+    } else {
+        accent.copy(alpha = 0.12f)
+    }
+    val stroke = palette.controlStroke.copy(alpha = if (palette.dark) 0.30f else 0.18f)
+    val shape = RoundedCornerShape(34.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 12.dp)
+            .shadow(
+                elevation = 10.dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.10f),
+                spotColor = Color.Black.copy(alpha = 0.14f)
+            )
+            .clip(shape)
+            .background(glass)
+            .border(BorderStroke(1.dp, stroke), shape)
+            .clickable(onClick = onClick)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                AlbumArtImage(
+                    song = song,
+                    modifier = Modifier.size(46.dp).clip(RoundedCornerShape(23.dp)),
+                    fallbackModifier = Modifier.size(24.dp)
                 )
-            } else {
-                Text(
-                    text = line.text,
-                    modifier = Modifier.fillMaxWidth().clickable { onLineClick(line) },
-                    textAlign = TextAlign.Center,
-                    style = if (isLandscape) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.74f),
-                    fontWeight = FontWeight.Normal
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        song.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = palette.primaryText,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        song.artist,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                IconButton(onClick = onPrevious) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "上一首", tint = palette.icon)
+                }
+                IconButton(
+                    onClick = onPlayPause,
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(accent)
+                ) {
+                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "暂停" else "播放", tint = Color.White)
+                }
+                IconButton(onClick = onNext) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "下一首", tint = palette.icon)
+                }
             }
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(10.dp)),
+                color = accent,
+                trackColor = palette.progressTrack
+            )
         }
     }
 }
@@ -289,23 +564,55 @@ private fun rememberSmoothLyricProgress(
 }
 
 @Composable
+private fun LyricsNavigationBarEffect(color: Color, darkTheme: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(color, darkTheme, view) {
+        val window = (view.context as? ComponentActivity)?.window
+        if (window != null) {
+            window.navigationBarColor = color.toArgb()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
+        }
+        onDispose {
+            window?.navigationBarColor = Color.Transparent.toArgb()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && window != null) {
+                window.isNavigationBarContrastEnforced = false
+            }
+        }
+    }
+}
+
+@Composable
 private fun SmoothKaraokeText(
     text: String,
     progress: Float,
     accent: Color,
     modifier: Modifier = Modifier,
+    inactiveColor: Color,
+    glowAlpha: Float,
     style: androidx.compose.ui.text.TextStyle,
     fontWeight: FontWeight
 ) {
-    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.56f)
     var textLayout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Text(
+            text = text,
+            modifier = Modifier.fillMaxWidth().graphicsLayer(alpha = glowAlpha),
+            textAlign = TextAlign.Center,
+            style = style.copy(color = accent),
+            fontWeight = fontWeight,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
         Text(
             text = text,
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.Center,
             style = style.copy(color = inactiveColor),
-            fontWeight = fontWeight
+            fontWeight = fontWeight,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             text = text,
@@ -324,12 +631,7 @@ private fun SmoothKaraokeText(
                             if (part > 0f) {
                                 val left = layout.getLineLeft(line)
                                 val right = left + (layout.getLineRight(line) - left) * part
-                                clipRect(
-                                    left = left,
-                                    top = layout.getLineTop(line),
-                                    right = right,
-                                    bottom = layout.getLineBottom(line)
-                                ) {
+                                clipRect(left = left, top = layout.getLineTop(line), right = right, bottom = layout.getLineBottom(line)) {
                                     this@drawWithContent.drawContent()
                                 }
                             }
@@ -339,6 +641,8 @@ private fun SmoothKaraokeText(
             textAlign = TextAlign.Center,
             style = style.copy(color = accent),
             fontWeight = fontWeight,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
             onTextLayout = { textLayout = it }
         )
     }

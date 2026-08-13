@@ -15,12 +15,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,6 +34,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,9 +52,12 @@ fun SettingsScreen(
     onHistoryClick: () -> Unit,
     onStatusLyricsClick: () -> Unit,
     onColorSettingsClick: () -> Unit,
+    onAnimationSettingsClick: () -> Unit,
+    onBilingualIndexClick: () -> Unit,
     onScanClick: () -> Unit,
     windowSizeClass: WindowSizeClass
 ) {
+    val playerPageSettings by viewModel.flowingBackgroundSettings.collectAsState()
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
@@ -74,11 +81,14 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            PlayerPageThemeSelector(settings = playerPageSettings, onChange = viewModel::updateFlowingBackgroundSettings)
             SettingsItem("导入管理", "导入歌曲、导入文件夹、管理已导入内容", Icons.Default.LibraryAdd, onImportManagerClick)
             SettingsItem("音效与音质", "均衡器、HiFi 模式和系统音效入口", Icons.Default.GraphicEq, onEqualizerClick)
             SettingsItem("播放历史", "查看最近播放、播放次数和常听歌曲", Icons.Default.History, onHistoryClick)
             SettingsItem("状态栏歌词", "悬浮窗歌词、位置、颜色和控制中心歌词", Icons.Default.Subtitles, onStatusLyricsClick)
+            SettingsItem("双语分词索引", "按字符集字库自动识别原文和译文", Icons.Default.Translate, onBilingualIndexClick)
             SettingsItem("整体配色", "预设、取色板、最近颜色和跟随播放配色", Icons.Default.Palette, onColorSettingsClick)
+            SettingsItem("播放器动画", "专辑模糊背景、柔和流光和歌词高亮", Icons.Default.Animation, onAnimationSettingsClick)
             SettingsItem("全盘扫描", "重新扫描系统媒体库", Icons.Default.Settings, onScanClick)
         }
     }

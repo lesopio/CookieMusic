@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +60,7 @@ import com.musicplayer.data.Playlist
 import com.musicplayer.data.Song
 import com.musicplayer.ui.components.SongItem
 import com.musicplayer.viewmodel.PlayerViewModel
+import com.musicplayer.viewmodel.LibraryUiState
 
 private enum class LibraryTab(val title: String, val icon: ImageVector) {
     Songs("歌曲", Icons.Default.MusicNote),
@@ -75,6 +78,7 @@ fun HomeScreen(
     val songs by viewModel.allSongs.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val libraryState by viewModel.libraryUiState.collectAsState()
     var currentTab by remember { mutableStateOf(LibraryTab.Songs) }
     var addSong by remember { mutableStateOf<Song?>(null) }
     val isLandscape = windowSizeClass.widthSizeClass >= WindowWidthSizeClass.Expanded
@@ -100,8 +104,17 @@ fun HomeScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
-            if (songs.isEmpty()) {
-                EmptyState()
+            if (libraryState is LibraryUiState.Loading && songs.isEmpty()) {
+                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(16.dp))
+                    Text("正在加载音乐库…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (songs.isEmpty()) {
+                EmptyState(
+                    message = (libraryState as? LibraryUiState.Error)?.message,
+                    onRetry = viewModel::scanSongs
+                )
             } else {
                 when (currentTab) {
                     LibraryTab.Songs -> SongGrid(sortedSongs, favorites, viewModel, onSongClick, { addSong = it }, isLandscape)
@@ -119,11 +132,11 @@ fun HomeScreen(
             playlists = playlists,
             onDismiss = { addSong = null },
             onAdd = { playlistId ->
-                viewModel.addSongToPlaylist(playlistId, song.id)
+                viewModel.addSongToPlaylist(playlistId, song.canonicalId)
                 addSong = null
             },
             onCreate = { name ->
-                viewModel.createPlaylistWithSong(name, song.id)
+                viewModel.createPlaylistWithSong(name, song.canonicalId)
                 addSong = null
             }
         )
@@ -164,11 +177,11 @@ fun SearchScreen(
             playlists = playlists,
             onDismiss = { addSong = null },
             onAdd = { playlistId ->
-                viewModel.addSongToPlaylist(playlistId, song.id)
+                viewModel.addSongToPlaylist(playlistId, song.canonicalId)
                 addSong = null
             },
             onCreate = { name ->
-                viewModel.createPlaylistWithSong(name, song.id)
+                viewModel.createPlaylistWithSong(name, song.canonicalId)
                 addSong = null
             }
         )
@@ -200,7 +213,7 @@ private fun SearchHeader(query: String, onQueryChange: (String) -> Unit) {
 @Composable
 private fun SongGrid(
     songs: List<Song>,
-    favorites: Set<Long>,
+    favorites: Set<String>,
     viewModel: PlayerViewModel,
     onSongClick: (Song) -> Unit,
     onSongLongClick: (Song) -> Unit,
@@ -220,7 +233,7 @@ private fun SongGrid(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(songs, key = { it.id }) { song ->
-                SongItem(song, favorites.contains(song.id), { onSongClick(song) }, { viewModel.toggleFavorite(song.id) }, onLongClick = { onSongLongClick(song) })
+                SongItem(song, favorites.contains(song.canonicalId), { onSongClick(song) }, { viewModel.toggleFavorite(song.canonicalId) }, onLongClick = { onSongLongClick(song) })
             }
         }
     } else {
@@ -229,7 +242,7 @@ private fun SongGrid(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(songs, key = { it.id }) { song ->
-                SongItem(song, favorites.contains(song.id), { onSongClick(song) }, { viewModel.toggleFavorite(song.id) }, onLongClick = { onSongLongClick(song) })
+                SongItem(song, favorites.contains(song.canonicalId), { onSongClick(song) }, { viewModel.toggleFavorite(song.canonicalId) }, onLongClick = { onSongLongClick(song) })
             }
         }
     }
@@ -239,35 +252,34 @@ private fun SongGrid(
 private fun GroupList(
     groups: Map<String, List<Song>>,
     icon: ImageVector,
-    favorites: Set<Long>,
+    favorites: Set<String>,
     viewModel: PlayerViewModel,
     onSongClick: (Song) -> Unit,
     onSongLongClick: (Song) -> Unit
 ) {
     var expandedGroup by remember { mutableStateOf<String?>(null) }
     val sortedEntries = remember(groups) { groups.toSortedMap().entries.toList() }
-    val expandedSongs = remember(expandedGroup, groups) {
-        expandedGroup?.let { key -> groups[key]?.sortedBy { it.title.lowercase() } }.orEmpty()
-    }
     LazyColumn(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        items(sortedEntries, key = { it.key }) { entry ->
-            GroupCard(entry.key, entry.value.size, icon, expandedGroup == entry.key) {
-                expandedGroup = if (expandedGroup == entry.key) null else entry.key
+        sortedEntries.forEach { entry ->
+            item(key = "group-${entry.key}") {
+                GroupCard(entry.key, entry.value.size, icon, expandedGroup == entry.key) {
+                    expandedGroup = if (expandedGroup == entry.key) null else entry.key
+                }
             }
-        }
-        if (expandedSongs.isNotEmpty()) {
-            itemsIndexed(expandedSongs, key = { _, song -> "expanded-${song.id}" }) { _, song ->
-                SongItem(
-                    song = song,
-                    isFavorite = favorites.contains(song.id),
-                    onClick = { onSongClick(song) },
-                    onFavoriteClick = { viewModel.toggleFavorite(song.id) },
-                    modifier = Modifier.padding(start = 12.dp),
-                    onLongClick = { onSongLongClick(song) }
-                )
+            if (expandedGroup == entry.key) {
+                itemsIndexed(entry.value.sortedBy { it.title.lowercase() }, key = { _, song -> "${entry.key}-${song.canonicalId}" }) { _, song ->
+                    SongItem(
+                        song = song,
+                        isFavorite = favorites.contains(song.canonicalId),
+                        onClick = { onSongClick(song) },
+                        onFavoriteClick = { viewModel.toggleFavorite(song.canonicalId) },
+                        modifier = Modifier.padding(start = 12.dp),
+                        onLongClick = { onSongLongClick(song) }
+                    )
+                }
             }
         }
     }
@@ -295,9 +307,9 @@ private fun GroupCard(title: String, count: Int, icon: ImageVector, expanded: Bo
 }
 
 @Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
+private fun EmptyState(message: String? = null, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.padding(32.dp),
+        modifier = modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -305,7 +317,9 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(16.dp))
         Text("还没有歌曲", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(8.dp))
-        Text("前往设置中的导入管理添加本地音乐，或执行全盘扫描。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Text(message ?: "前往设置中的导入管理添加本地音乐，或执行全盘扫描。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.height(18.dp))
+        Button(onClick = onRetry) { Text("重新扫描") }
     }
 }
 

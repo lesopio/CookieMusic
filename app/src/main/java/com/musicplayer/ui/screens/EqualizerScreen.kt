@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -31,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -48,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musicplayer.data.AudioInfo
 import com.musicplayer.data.EqualizerPreset
@@ -68,21 +72,26 @@ fun EqualizerScreen(
     val context = LocalContext.current
     val effectsEnabled = !eqState.hifiModeEnabled
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopAppBar(
-            modifier = Modifier.statusBarsPadding(),
-            title = { Text("音效与音质") },
-            navigationIcon = {
-                IconButton(onClick = onBackClick) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-        )
-
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.statusBarsPadding(),
+                title = { Text("音效与音质") },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
+        }
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(padding)
+                .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -147,14 +156,14 @@ private fun EqualizerCard(
     isLandscape: Boolean,
     viewModel: PlayerViewModel
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("均衡器", style = MaterialTheme.typography.titleMedium)
                     Text(
                         if (effectsEnabled) "5 段系统音效调节" else "HiFi 模式下已停用",
@@ -234,7 +243,7 @@ private fun AudioQualityCard(
     onHifiChange: (Boolean) -> Unit,
     audioInfo: AudioInfo?
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f))) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.GraphicEq, contentDescription = null)
@@ -286,12 +295,12 @@ private fun AdvancedEffectsCard(
     onLoudnessGain: (Float) -> Unit
 ) {
     val enabled = !hifiLocked
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.GraphicEq, contentDescription = null)
                 Spacer(Modifier.width(10.dp))
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("高级音效", style = MaterialTheme.typography.titleMedium)
                     Text(
                         if (hifiLocked) "HiFi 模式下已停用应用内增强。" else "依赖系统 AudioEffect，部分设备可能不可用。",
@@ -330,12 +339,12 @@ private fun SystemAudioCard(
     onSoundSettings: () -> Unit,
     onBluetoothSettings: () -> Unit
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f))) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Bluetooth, contentDescription = null)
                 Spacer(Modifier.width(10.dp))
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("系统增强与蓝牙编码", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "杜比全景声、设备 HiFi 芯片和 LDAC 由系统、耳机和蓝牙设置决定。",
@@ -344,13 +353,13 @@ private fun SystemAudioCard(
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onSoundSettings, modifier = Modifier.weight(1f)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onSoundSettings, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Settings, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("声音设置")
                 }
-                OutlinedButton(onClick = onBluetoothSettings, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onBluetoothSettings, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Bluetooth, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("蓝牙设置")
@@ -362,9 +371,21 @@ private fun SystemAudioCard(
 
 @Composable
 private fun InfoLine(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, textAlign = TextAlign.End)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+        Text(
+            label,
+            modifier = Modifier.weight(0.38f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            value,
+            modifier = Modifier.weight(0.62f),
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

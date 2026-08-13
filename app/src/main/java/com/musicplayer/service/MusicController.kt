@@ -23,6 +23,7 @@ class MusicController(private val context: Context) {
     private val pendingListeners = mutableSetOf<Player.Listener>()
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+    private var pendingPlaybackMode: PlaybackMode? = null
 
     fun connect() {
         val sessionToken = SessionToken(context, ComponentName(context, MusicPlaybackService::class.java))
@@ -30,6 +31,7 @@ class MusicController(private val context: Context) {
         controllerFuture?.addListener({
             mediaController = controllerFuture?.get()
             pendingListeners.forEach { mediaController?.addListener(it) }
+            pendingPlaybackMode?.let { setPlaybackMode(it) }
             _isConnected.value = true
         }, MoreExecutors.directExecutor())
     }
@@ -96,15 +98,28 @@ class MusicController(private val context: Context) {
     }
 
     fun setPlaybackMode(mode: PlaybackMode) {
-        mediaController?.let { ctrl ->
+        val ctrl = mediaController
+        if (ctrl == null) {
+            pendingPlaybackMode = mode
+        } else {
             ctrl.repeatMode = when (mode) {
                 PlaybackMode.Sequential -> Player.REPEAT_MODE_OFF
                 PlaybackMode.RepeatOne -> Player.REPEAT_MODE_ONE
                 PlaybackMode.Shuffle -> Player.REPEAT_MODE_ALL
             }
             ctrl.shuffleModeEnabled = mode == PlaybackMode.Shuffle
+            pendingPlaybackMode = null
         }
     }
+
+    val playbackMode: PlaybackMode
+        get() = mediaController?.let { ctrl ->
+            when {
+                ctrl.shuffleModeEnabled -> PlaybackMode.Shuffle
+                ctrl.repeatMode == Player.REPEAT_MODE_ONE -> PlaybackMode.RepeatOne
+                else -> PlaybackMode.Sequential
+            }
+        } ?: pendingPlaybackMode ?: PlaybackMode.Sequential
 
     val isPlaying: Boolean get() = mediaController?.isPlaying ?: false
     val currentPosition: Long get() = mediaController?.currentPosition ?: 0L
@@ -140,6 +155,7 @@ class MusicController(private val context: Context) {
             putString(EXTRA_ORIGINAL_ARTIST, artist)
             putString(EXTRA_ORIGINAL_ALBUM, album)
             putString(EXTRA_FOLDER, folderName)
+            putString(EXTRA_CANONICAL_ID, canonicalId)
         }
         return MediaItem.Builder()
             .setMediaId(id.toString())
@@ -162,6 +178,7 @@ class MusicController(private val context: Context) {
         val extras = metadata.extras
         return Song(
             id = mediaId.toLongOrNull() ?: -kotlin.math.abs(uri.toString().hashCode().toLong()),
+            canonicalId = extras?.getString(EXTRA_CANONICAL_ID) ?: "legacy:${mediaId}",
             title = extras?.getString(EXTRA_ORIGINAL_TITLE)?.takeIf { it.isNotBlank() }
                 ?: metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: "未知歌曲",
             artist = extras?.getString(EXTRA_ORIGINAL_ARTIST)?.takeIf { it.isNotBlank() }
@@ -180,5 +197,6 @@ class MusicController(private val context: Context) {
         const val EXTRA_ORIGINAL_ARTIST = "original_artist"
         const val EXTRA_ORIGINAL_ALBUM = "original_album"
         const val EXTRA_FOLDER = "folder"
+        const val EXTRA_CANONICAL_ID = "canonical_id"
     }
 }
