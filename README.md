@@ -192,6 +192,6 @@ PlayerViewModel
 
 <div align="center">
 
-**CookieMusic — 让本地音乐保持简单，也保留足够的细节。**
+**CookieMusic **
 
 </div>
